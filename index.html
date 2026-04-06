@@ -944,7 +944,7 @@ async function getAI(ticker,name,signal,score,rsi,mom20,volR,F,cur,stop,tgt,hor,
         '- EPS: ' + (ov.eps||'N/A') + ' | Mkt Cap: ' + (ov.marketCap ? (ov.marketCap/1e9).toFixed(1)+'B' : 'N/A');
     }
     var prompt='Tu es analyste quantitatif senior, trading court terme (<1 mois).\n\nACTION: '+ticker+' — '+name+'\nPrix: '+cur.toFixed(2)+' '+currency+' | Signal: '+signal+' (score: '+(score>0?'+':'')+score+'/100)\nRSI: '+rsi.toFixed(1)+' | Momentum 20j: '+(mom20>0?'+':'')+mom20.toFixed(2)+'% | Volume: x'+volR.toFixed(2)+'\nStop: '+stop.toFixed(2)+' | Objectif algo: '+tgt.toFixed(2)+' | Horizon: '+hor+'\nFacteurs:\n'+fList+avContext+'\n\nAnalyse en 5 points:\n1. SIGNAL — Direction '+dir+' et 2-3 facteurs determinants\n2. CONTEXTE — Macro/secteur, valorisation vs consensus analystes\n3. NIVEAUX — Support immediat, resistance, zone retournement\n4. CATALYSEURS — Evenements 2-4 prochaines semaines\n5. CONVICTION — Niveau (Faible/Moyen/Fort), ratio R/R, conseil sizing\n\nDirect, professionnel, 2-3 phrases par point.';
-    var r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
+    var r=await fetch('https://xaueur-proxy-production.up.railway.app/claude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
     var d=await r.json();
     $('aiText').textContent=(d.content&&d.content[0]&&d.content[0].text)||'Analyse indisponible.';
   }catch(e){$('aiText').innerHTML='<span style="color:var(--muted)">Analyse IA indisponible.</span>';}
