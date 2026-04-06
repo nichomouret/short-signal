@@ -224,9 +224,9 @@ select.si{cursor:pointer;}
     </div>
     <div class="cpanel"><div class="ctitle">PRIX + EMA 9 / EMA 21 — 30 DERNIÈRES SÉANCES</div><canvas id="chart" height="85"></canvas></div>
     <div class="tgrid">
-      <div class="tbox"><div class="tlbl">STOP LOSS</div><div class="tprice neg" id="tStop"></div><div class="tpct neg" id="tStopP"></div></div>
+      <div class="tbox"><div class="tlbl" id="tStopLbl">STOP LOSS</div><div class="tprice neg" id="tStop"></div><div class="tpct neg" id="tStopP"></div></div>
       <div class="tbox"><div class="tlbl">PRIX ACTUEL</div><div class="tprice" id="tCurr"></div><div class="tpct" style="color:var(--muted)">ENTRÉE SUGGÉRÉE</div></div>
-      <div class="tbox"><div class="tlbl">OBJECTIF IA</div><div class="tprice pos" id="tTgt"></div><div class="tpct pos" id="tTgtP"></div></div>
+      <div class="tbox"><div class="tlbl" id="tTgtLbl">OBJECTIF IA</div><div class="tprice" id="tTgt"></div><div class="tpct" id="tTgtP"></div></div>
     </div>
     <div class="hbar"><span style="color:var(--muted);letter-spacing:1px;">HORIZON SUGGÉRÉ</span><span id="rHorizon" style="color:var(--neutral);letter-spacing:1px;font-size:11px;"></span></div>
 
@@ -685,7 +685,7 @@ function buildFactors(m,closes,highs,lows){
   if(gc===3)F.pat={s:1,l:'3 bougies haussieres'};else if(gc===0)F.pat={s:-1,l:'3 bougies baissieres'};else F.pat={s:0,l:gc+'/3 bougies'};
   var hor=atrPct>3?'3-7 JOURS (volatil)':atrPct>1.5?'7-14 JOURS':'14-28 JOURS';
   var a2=ATR*2,stop=m.score>=0?cur-a2:cur+a2,tgt=m.score>=0?cur+a2*1.5:cur-a2*1.5;
-  return{F:F,hor:hor,stop:stop,tgt:tgt,e9:e9.slice(-30),e21:e21.slice(-30),e50v:e50[n-1]};
+  return{F:F,hor:hor,stop:stop,tgt:tgt,e9:e9.slice(-30),e21:e21.slice(-30),e50v:e50[n-1],atrPct:atr/(closes[n-1]||1)*100};
 }
 
 // ─── CHART ────────────────────────────────────────────────────────────────────
@@ -832,9 +832,28 @@ function doRender(m, dataSource){
   drawFactors(sig.F);
   drawMAs(cur,sig.e9[sig.e9.length-1],sig.e21[sig.e21.length-1],sig.e50v);
   drawChart(dates.slice(-30),closes.slice(-30),sig.e9,sig.e21);
-  $('tStop').textContent=sig.stop.toFixed(2);$('tStopP').textContent=((sig.stop-cur)/cur*100).toFixed(2)+'%';
-  $('tCurr').textContent=cur.toFixed(2);$('tTgt').textContent=sig.tgt.toFixed(2);
-  var tp=(sig.tgt-cur)/cur*100;$('tTgtP').textContent=(tp>=0?'+':'')+tp.toFixed(2)+'%';
+  // Direction-aware stop/target display
+  var isLong = m.signal === 'LONG' || m.score >= 0;
+  var isShort = m.signal === 'SHORT' || m.score < -20;
+  // For LONG: stop below price, target above
+  // For SHORT: stop above price, target below
+  // Swap if algo computed wrong direction
+  var stopVal = sig.stop, tgtVal = sig.tgt;
+  if (isLong && stopVal > cur) stopVal = cur * (1 - (sig.atrPct||2)/100*2);
+  if (isShort && tgtVal > cur) tgtVal = cur * (1 - (sig.atrPct||2)/100*3);
+  var stopPct = ((stopVal - cur) / cur * 100);
+  var tgtPct  = ((tgtVal  - cur) / cur * 100);
+  var dirLabel = isShort ? ' (SHORT)' : ' (LONG)';
+  $('tStop').textContent = stopVal.toFixed(2);
+  $('tStop').style.color = isShort ? 'var(--neutral)' : 'var(--short)';
+  $('tStopP').textContent = stopPct.toFixed(2) + '%';
+  $('tStopLbl').textContent = 'STOP LOSS' + dirLabel;
+  $('tCurr').textContent = cur.toFixed(2);
+  $('tTgt').textContent = tgtVal.toFixed(2);
+  $('tTgt').style.color = isShort ? 'var(--short)' : 'var(--long)';
+  $('tTgtP').textContent = (tgtPct >= 0 ? '+' : '') + tgtPct.toFixed(2) + '%';
+  $('tTgtP').style.color = isShort ? 'var(--short)' : 'var(--long)';
+  $('tTgtLbl').textContent = 'OBJECTIF IA' + dirLabel;
   $('rHorizon').textContent=sig.hor;
   $('result').style.display='block';
   $('aiText').innerHTML='<span class="spinner"></span><span style="color:var(--muted);font-size:10px;">Generation analyse IA...</span>';
