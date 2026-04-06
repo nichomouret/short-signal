@@ -274,7 +274,7 @@ select.si{cursor:pointer;}
         <option value="mid">Mid Cap</option>
         <option value="small">Small Cap</option>
       </select>
-      <button class="btn-sm g" onclick="renderReco()">↻ ACTUALISER</button>
+      <button class="btn-sm g" onclick="actualiserPrix()">↻ ACTUALISER PRIX LIVE</button>
     </div>
   </div>
   <div class="reco-stat-grid" id="recoStats"></div>
@@ -286,7 +286,7 @@ select.si{cursor:pointer;}
 <div class="page" id="page-radar">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:10px;">
     <div><div style="font-family:'Syne',sans-serif;font-size:17px;font-weight:700;">⚡ Radar de Signaux Avancés</div><div style="font-size:9px;color:var(--muted);letter-spacing:1px;margin-top:3px;">Short Squeeze · Options Flow · Franchissements institutionnels frais</div></div>
-    <button class="btn-sm g" onclick="renderRadar()">↻ ACTUALISER</button>
+    <button class="btn-sm g" onclick="actualiserPrix()">↻ ACTUALISER</button>
   </div>
   <div class="rtabs">
     <button class="rtab active" id="rtab-squeeze" onclick="showRTab('squeeze')">🔥 SHORT SQUEEZE</button>
@@ -457,13 +457,10 @@ function showTab(id){
   if(id==='paper') renderPaper();
   if(id==='perf') renderPerf();
   if(id==='reco') {
-    renderReco(); // render immediately with whatever data we have
-    // Then fetch live data in background and re-render
-    fetchAllRecoPrices().then(function(){ renderReco(); }).catch(function(){ renderReco(); });
+    renderReco(); // render immediately — use Actualiser button to fetch live prices
   }
   if(id==='radar') {
     renderRadar();
-    fetchAllRecoPrices().then(function(){ renderRadar(); }).catch(function(){ renderRadar(); });
   }
 }
 function showRTab(id){
@@ -1480,6 +1477,35 @@ async function fetchAllRecoPrices() {
   } catch(e) {
     console.warn('fetchAllRecoPrices error:', e.message);
   }
+}
+
+async function actualiserPrix(){
+  setStatus('Chargement des prix live...','var(--neutral)');
+  // Fetch in batches of 2 with 1s delay to respect rate limit
+  var tickers = [];
+  var seen = {};
+  RECO_DATA.concat(SHORT_DATA||[]).concat(FLOW_DATA||[]).forEach(function(d){
+    if(!seen[d.ticker]){seen[d.ticker]=1;tickers.push(d.ticker);}
+  });
+  for (var i = 0; i < tickers.length; i += 2) {
+    var batch = tickers.slice(i, i+2);
+    try {
+      await Promise.all(batch.map(function(t){
+        return Promise.all([
+          fetchLivePrice(t).catch(function(){}),
+          fetchRecoSeries(t).catch(function(){})
+        ]);
+      }));
+    } catch(e) {}
+    await new Promise(function(r){setTimeout(r,1000);});
+    setStatus('Chargement... '+Math.min(i+2,tickers.length)+'/'+tickers.length,'var(--neutral)');
+  }
+  applyLivePricesToReco();
+  setStatus('✓ Prix mis à jour — '+new Date().toLocaleTimeString('fr-FR'),'var(--long)');
+  // Re-render current tab
+  var activeTab = document.querySelector('.tab.active');
+  if(activeTab && activeTab.id === 'tab-reco') renderReco();
+  if(activeTab && activeTab.id === 'tab-radar') renderRadar();
 }
 
 function renderReco(){
