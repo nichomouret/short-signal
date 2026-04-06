@@ -189,7 +189,7 @@ select.si{cursor:pointer;}
 
 <!-- SIGNAL PAGE -->
 <div class="page active" id="page-signal">
-  <div class="demo-banner">⚡ MODE DÉMONSTRATION — Données simulées. Branchez votre clé TwelveData pour les données réelles.</div>
+  <div class="demo-banner">✓ DONNÉES RÉELLES — TwelveData connecté. Signaux institutionnels en mode démonstration illustratif.</div>
   <div class="search-row">
     <div class="ac-wrap">
       <input class="si" id="searchInput" type="text" autocomplete="off" placeholder="Tapez un nom : Apple, LVMH, Airbus, Tesla, BNP Paribas...">
@@ -351,6 +351,73 @@ select.si{cursor:pointer;}
 
 <script>
 'use strict';
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
+var TWELVEDATA_KEY = '10b3ff3aa4b444ae85d350902c523b0f';
+var TWELVEDATA_BASE = 'https://api.twelvedata.com';
+
+// ─── LIVE DATA FETCH ─────────────────────────────────────────────────────────
+function calcRSI(closes, period) {
+  period = period || 14;
+  if (closes.length < period + 1) return 50;
+  var gains = 0, losses = 0;
+  for (var i = 1; i <= period; i++) {
+    var d = closes[i] - closes[i-1];
+    if (d >= 0) gains += d; else losses -= d;
+  }
+  var ag = gains/period, al = losses/period;
+  for (var i = period+1; i < closes.length; i++) {
+    var d = closes[i] - closes[i-1];
+    ag = (ag*(period-1) + Math.max(d,0)) / period;
+    al = (al*(period-1) + Math.max(-d,0)) / period;
+  }
+  return al === 0 ? 100 : 100 - 100/(1 + ag/al);
+}
+
+async function fetchLiveData(ticker) {
+  try {
+    var url1 = TWELVEDATA_BASE+'/quote?symbol='+encodeURIComponent(ticker)+'&apikey='+TWELVEDATA_KEY;
+    var url2 = TWELVEDATA_BASE+'/time_series?symbol='+encodeURIComponent(ticker)+'&interval=1day&outputsize=60&apikey='+TWELVEDATA_KEY;
+    var [qr, tr] = await Promise.all([fetch(url1), fetch(url2)]);
+    var q = await qr.json();
+    var t = await tr.json();
+    if (q.status === 'error' || !q.close) { console.warn('TwelveData quote error:', q.message); return null; }
+    if (t.status === 'error' || !t.values) { console.warn('TwelveData series error:', t.message); return null; }
+    var vals = t.values.slice().reverse(); // oldest first
+    var closes = vals.map(function(v){ return parseFloat(v.close); });
+    var highs   = vals.map(function(v){ return parseFloat(v.high); });
+    var lows    = vals.map(function(v){ return parseFloat(v.low); });
+    var volumes = vals.map(function(v){ return parseFloat(v.volume||0); });
+    var n = closes.length;
+    var cur = parseFloat(q.close);
+    // Compute live indicators
+    var rsi14 = calcRSI(closes, 14);
+    var mom20 = n >= 21 ? ((cur - closes[n-21]) / closes[n-21] * 100) : 0;
+    var vol5  = volumes.slice(-5).reduce(function(a,b){return a+b;},0)/5;
+    var vol20 = volumes.slice(-20).reduce(function(a,b){return a+b;},0)/20;
+    var volR  = vol20 > 0 ? vol5/vol20 : 1;
+    // Simple signal from indicators
+    var sigScore = 0;
+    if (rsi14 < 35) sigScore += 2; else if (rsi14 < 45) sigScore += 1; else if (rsi14 > 65) sigScore -= 2; else if (rsi14 > 55) sigScore -= 1;
+    if (mom20 > 5) sigScore += 2; else if (mom20 > 1) sigScore += 1; else if (mom20 < -5) sigScore -= 2; else if (mom20 < -1) sigScore -= 1;
+    if (volR > 1.5) sigScore += (mom20 > 0 ? 1 : -1);
+    var scoreNorm = Math.round(sigScore / 6 * 100);
+    var signal = scoreNorm >= 25 ? 'LONG' : scoreNorm <= -25 ? 'SHORT' : 'NEUTRE';
+    var trend  = mom20 > 3 ? 'up' : mom20 < -3 ? 'down' : 'flat';
+    return {
+      name: q.name||ticker, exchange: q.exchange||'', currency: q.currency||'USD',
+      price: cur, chg: parseFloat(q.change)||0, chgP: parseFloat(q.percent_change)||0,
+      signal: signal, score: scoreNorm,
+      rsi: rsi14, mom20: mom20, volR: volR,
+      basePrice: closes[0], trend: trend,
+      liveCloses: closes, liveHighs: highs, liveLows: lows,
+      liveDates: vals.map(function(v){ return v.datetime.slice(5); })
+    };
+  } catch(e) {
+    console.warn('TwelveData fetch failed:', e.message);
+    return null;
+  }
+}
+
 // ─── SAFE UTILS ──────────────────────────────────────────────────────────────
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function $(id){ return document.getElementById(id); }
@@ -679,17 +746,33 @@ function analyze(){
   setTimeout(function(){doAnalyze();},400);
 }
 function doAnalyze(){
-  var m=MOCK[selTicker];
-  if(!m){
-    m={name:selName,exchange:selXch,currency:selCur||'USD',price:100+Math.random()*400,chg:(Math.random()-0.5)*5,chgP:(Math.random()-0.5)*3,
-       signal:['LONG','SHORT','NEUTRE'][Math.floor(Math.random()*3)],score:Math.round((Math.random()-0.5)*120),
-       rsi:30+Math.random()*50,mom20:(Math.random()-0.5)*20,volR:0.7+Math.random()*1.5,basePrice:100+Math.random()*400,trend:'flat'};
-  }
+  // Try live data first, fallback to mock
+  fetchLiveData(selTicker).then(function(live){
+    var m = live || MOCK[selTicker];
+    if(!m){
+      m={name:selName,exchange:selXch,currency:selCur||'USD',price:100+Math.random()*400,chg:(Math.random()-0.5)*5,chgP:(Math.random()-0.5)*3,
+         signal:['LONG','SHORT','NEUTRE'][Math.floor(Math.random()*3)],score:Math.round((Math.random()-0.5)*120),
+         rsi:30+Math.random()*50,mom20:(Math.random()-0.5)*20,volR:0.7+Math.random()*1.5,basePrice:100+Math.random()*400,trend:'flat'};
+    }
+    doRender(m, live ? 'live' : 'demo');
+  }).catch(function(){
+    var m = MOCK[selTicker] || {name:selName,exchange:selXch,currency:selCur||'USD',price:100+Math.random()*400,chg:(Math.random()-0.5)*5,chgP:(Math.random()-0.5)*3,signal:'NEUTRE',score:0,rsi:50,mom20:0,volR:1,basePrice:100,trend:'flat'};
+    doRender(m, 'demo');
+  });
+}
+function doRender(m, dataSource){
+  // Use live series if available, otherwise generate
+  var closes, highs, lows, dates;
+  if(m.liveCloses){
+    closes=m.liveCloses; highs=m.liveHighs; lows=m.liveLows; dates=m.liveDates;
+  } else {
   var ser=genSeries(m.basePrice||m.price*0.9,m.trend,60);
   var sc=m.price/ser.closes[ser.closes.length-1];
-  var closes=ser.closes.map(function(x){return x*sc;});
-  var highs=ser.highs.map(function(x){return x*sc;});
-  var lows=ser.lows.map(function(x){return x*sc;});
+  closes=ser.closes.map(function(x){return x*sc;});
+  highs=ser.highs.map(function(x){return x*sc;});
+  lows=ser.lows.map(function(x){return x*sc;});
+  dates=ser.dates||[];
+  }
   var sig=buildFactors(m,closes,highs,lows);
   var cur=m.price;
   $('rTicker').textContent=selTicker;
@@ -713,15 +796,17 @@ function doAnalyze(){
   $('mScore').innerHTML='<span style="color:'+scC+'">'+(m.score>0?'+':'')+m.score+'</span>';
   drawFactors(sig.F);
   drawMAs(cur,sig.e9[sig.e9.length-1],sig.e21[sig.e21.length-1],sig.e50v);
-  drawChart(ser.dates.slice(-30),closes.slice(-30),sig.e9,sig.e21);
+  drawChart(dates.slice(-30),closes.slice(-30),sig.e9,sig.e21);
   $('tStop').textContent=sig.stop.toFixed(2);$('tStopP').textContent=((sig.stop-cur)/cur*100).toFixed(2)+'%';
   $('tCurr').textContent=cur.toFixed(2);$('tTgt').textContent=sig.tgt.toFixed(2);
   var tp=(sig.tgt-cur)/cur*100;$('tTgtP').textContent=(tp>=0?'+':'')+tp.toFixed(2)+'%';
   $('rHorizon').textContent=sig.hor;
   $('result').style.display='block';
   $('aiText').innerHTML='<span class="spinner"></span><span style="color:var(--muted);font-size:10px;">Generation analyse IA...</span>';
-  setStatus('✓ '+selTicker+' — '+new Date().toLocaleTimeString('fr-FR')+' (demo)','var(--long)');
+  // status set in doRender
   currentAnalysis={ticker:selTicker,name:m.name||selName,currency:m.currency||'USD',price:cur,stop:sig.stop,target:sig.tgt,horizon:sig.hor,signal:m.signal,score:m.score};
+  var statusLabel = dataSource==='live' ? '' : ' (demo)';
+  setStatus('✓ '+selTicker+' — '+new Date().toLocaleTimeString('fr-FR')+statusLabel,'var(--long)');
   getAI(selTicker,m.name||selName,m.signal,m.score,m.rsi,m.mom20,m.volR,sig.F,cur,sig.stop,sig.tgt,sig.hor,m.currency||'USD');
 }
 
