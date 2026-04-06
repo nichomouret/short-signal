@@ -1014,20 +1014,145 @@ $('btnNewReal').addEventListener('click',function(){openAddModal('real');});
 $('btnNewPaper').addEventListener('click',function(){openAddModal('paper');});
 
 // ─── PORTFOLIO RENDER ────────────────────────────────────────────────────────
-function pnl(t){if(!t.exitPrice)return null;var d=t.direction==='LONG'?(t.exitPrice-t.entryPrice):(t.entryPrice-t.exitPrice);return d*t.qty;}
-function pnlPct(t){if(!t.exitPrice)return null;var d=t.direction==='LONG'?(t.exitPrice-t.entryPrice):(t.entryPrice-t.exitPrice);return d/t.entryPrice*100;}
-function tradeRow(t,type){
-  var isOpen=t.status==='open',pl=pnl(t),plPct=pnlPct(t);
-  var plStr=isOpen?'<span style="color:var(--muted)">en cours</span>':(pl>=0?'<span class="pos">+'+pl.toFixed(0)+' '+t.currency+'</span>':'<span class="neg">'+pl.toFixed(0)+' '+t.currency+'</span>');
-  var pctStr=isOpen?'':(plPct>=0?'<span class="pos">+'+plPct.toFixed(2)+'%</span>':'<span class="neg">'+plPct.toFixed(2)+'%</span>');
-  var statusBadge=isOpen?'<span style="color:var(--neutral);font-size:8px">OUVERT</span>':(pl>=0?'<span class="pos" style="font-size:8px">WIN</span>':'<span class="neg" style="font-size:8px">LOSS</span>');
-  var dc=t.direction==='LONG'?'var(--long)':'var(--short)';
-  var closeBtn=isOpen?'<button class="btn-sm g" data-close-type="'+type+'" data-close-id="'+t.id+'">CLOTURER</button>':'';
-  return '<tr><td><b>'+esc(t.ticker)+'</b><div style="font-size:9px;color:var(--muted)">'+esc(t.entryDate)+'</div></td><td style="color:'+dc+'">'+esc(t.direction)+'</td><td>'+t.entryPrice.toFixed(2)+'</td><td>'+t.qty+'</td><td style="color:var(--short)">'+(t.stop?t.stop.toFixed(2):'—')+'</td><td style="color:var(--long)">'+(t.target?t.target.toFixed(2):'—')+'</td><td>'+(isOpen?'—':t.exitPrice.toFixed(2))+'</td><td>'+plStr+' '+pctStr+'</td><td>'+statusBadge+'</td><td style="display:flex;gap:4px;align-items:center">'+closeBtn+'<button class="btn-sm m" data-del-type="'+type+'" data-del-id="'+t.id+'">✕</button></td></tr>';
+// ─── LIVE PRICES CACHE ────────────────────────────────────────────────────────
+var livePrices = {}; // {ticker: {price, chgP, lastFetch}}
+var liveRefreshInterval = null;
+
+async function fetchLivePrice(ticker) {
+  try {
+    var r = await fetch(TWELVEDATA_BASE+'/quote?symbol='+encodeURIComponent(ticker)+'&apikey='+TWELVEDATA_KEY);
+    var d = await r.json();
+    if (d && d.close && !d.status==='error') {
+      livePrices[ticker] = {
+        price: parseFloat(d.close),
+        chgP:  parseFloat(d.percent_change||0),
+        lastFetch: Date.now()
+      };
+    }
+  } catch(e) {}
 }
+
+async function refreshAllLivePrices(trades) {
+  var tickers = [...new Set(trades.filter(function(t){return t.status==='open';}).map(function(t){return t.ticker;}))];
+  await Promise.all(tickers.map(fetchLivePrice));
+}
+
+function startLiveRefresh(getTradesFn, renderFn) {
+  if (liveRefreshInterval) clearInterval(liveRefreshInterval);
+  liveRefreshInterval = setInterval(async function() {
+    var trades = getTradesFn();
+    await refreshAllLivePrices(trades);
+    renderFn();
+  }, 60000); // refresh every 60s
+}
+
+// ─── P&L FUNCTIONS ────────────────────────────────────────────────────────────
+function getLivePrice(t) {
+  if (t.status !== 'open') return null;
+  var lp = livePrices[t.ticker];
+  return lp ? lp.price : null;
+}
+
+function pnl(t){
+  if(t.status==='open'){
+    var lp = getLivePrice(t);
+    if(!lp) return null;
+    var d = t.direction==='LONG' ? (lp - t.entryPrice) : (t.entryPrice - lp);
+    return d * t.qty;
+  }
+  if(!t.exitPrice) return null;
+  var d=t.direction==='LONG'?(t.exitPrice-t.entryPrice):(t.entryPrice-t.exitPrice);
+  return d*t.qty;
+}
+
+function pnlPct(t){
+  if(t.status==='open'){
+    var lp = getLivePrice(t);
+    if(!lp) return null;
+    var d = t.direction==='LONG' ? (lp - t.entryPrice) : (t.entryPrice - lp);
+    return d / t.entryPrice * 100;
+  }
+  if(!t.exitPrice) return null;
+  var d=t.direction==='LONG'?(t.exitPrice-t.entryPrice):(t.entryPrice-t.exitPrice);
+  return d/t.entryPrice*100;
+}
+
+function tradeRow(t,type){
+  var isOpen = t.status==='open';
+  var lp = getLivePrice(t);
+  var pl = pnl(t);
+  var plPct = pnlPct(t);
+  var dc = t.direction==='LONG'?'var(--long)':'var(--short)';
+
+  // Live price cell
+  var livePriceStr = isOpen
+    ? (lp ? '<span style="font-family:Syne,sans-serif;font-size:11px;font-weight:700;color:'+(lp>=t.entryPrice?'var(--long)':'var(--short)')+'">'+lp.toFixed(2)+'</span>' : '<span style="color:var(--muted);font-size:9px">Chargement...</span>')
+    : (t.exitPrice ? t.exitPrice.toFixed(2) : '—');
+
+  // P&L cell
+  var plStr, pctStr;
+  if (isOpen && lp) {
+    plStr = pl >= 0
+      ? '<span class="pos">+'+pl.toFixed(0)+' '+t.currency+'</span>'
+      : '<span class="neg">'+pl.toFixed(0)+' '+t.currency+'</span>';
+    pctStr = plPct >= 0
+      ? '<span class="pos">+'+plPct.toFixed(2)+'%</span>'
+      : '<span class="neg">'+plPct.toFixed(2)+'%</span>';
+  } else if (isOpen) {
+    plStr = '<span style="color:var(--muted);font-size:9px">—</span>';
+    pctStr = '';
+  } else {
+    plStr = pl >= 0
+      ? '<span class="pos">+'+pl.toFixed(0)+' '+t.currency+'</span>'
+      : '<span class="neg">'+pl.toFixed(0)+' '+t.currency+'</span>';
+    pctStr = plPct >= 0
+      ? '<span class="pos">+'+plPct.toFixed(2)+'%</span>'
+      : '<span class="neg">'+plPct.toFixed(2)+'%</span>';
+  }
+
+  // Status badge — for open trades show proximity to stop/target
+  var statusBadge;
+  if (isOpen && lp && t.stop && t.target) {
+    var range = Math.abs(t.target - t.stop);
+    var distToStop = Math.abs(lp - t.stop) / range * 100;
+    var distToTarget = Math.abs(lp - t.target) / range * 100;
+    if (distToStop < 15) statusBadge = '<span style="color:var(--short);font-size:8px;font-weight:700">⚠ PROCHE STOP</span>';
+    else if (distToTarget < 15) statusBadge = '<span style="color:var(--long);font-size:8px;font-weight:700">🎯 PROCHE OBJ.</span>';
+    else statusBadge = '<span style="color:var(--neutral);font-size:8px">EN COURS</span>';
+  } else if (isOpen) {
+    statusBadge = '<span style="color:var(--neutral);font-size:8px">OUVERT</span>';
+  } else {
+    statusBadge = (pl||0) >= 0
+      ? '<span class="pos" style="font-size:8px">WIN</span>'
+      : '<span class="neg" style="font-size:8px">LOSS</span>';
+  }
+
+  var closeBtn = isOpen ? '<button class="btn-sm g" data-close-type="'+type+'" data-close-id="'+t.id+'">CLÔTURER</button>' : '';
+
+  return '<tr>'+
+    '<td><b>'+esc(t.ticker)+'</b><div style="font-size:9px;color:var(--muted)">'+esc(t.entryDate)+'</div></td>'+
+    '<td style="color:'+dc+'">'+esc(t.direction)+'</td>'+
+    '<td>'+t.entryPrice.toFixed(2)+'</td>'+
+    '<td>'+t.qty+'</td>'+
+    '<td style="color:var(--short)">'+(t.stop?t.stop.toFixed(2):'—')+'</td>'+
+    '<td style="color:var(--long)">'+(t.target?t.target.toFixed(2):'—')+'</td>'+
+    '<td>'+livePriceStr+'</td>'+
+    '<td>'+plStr+'<br>'+pctStr+'</td>'+
+    '<td>'+statusBadge+'</td>'+
+    '<td style="display:flex;gap:4px;align-items:center">'+closeBtn+'<button class="btn-sm m" data-del-type="'+type+'" data-del-id="'+t.id+'">✕</button></td>'+
+    '</tr>';
+}
+
 function tradesTable(trades,type){
   if(!trades.length)return '<div class="empty">Aucun trade.</div>';
-  return '<div style="overflow-x:auto"><table class="trade-table"><thead><tr><th>ACTION</th><th>DIR.</th><th>ENTREE</th><th>QTE</th><th>STOP</th><th>OBJECTIF</th><th>SORTIE</th><th>P&L</th><th>STATUT</th><th></th></tr></thead><tbody>'+trades.map(function(t){return tradeRow(t,type);}).join('')+'</tbody></table></div>';
+  return '<div style="overflow-x:auto"><table class="trade-table">'+
+    '<thead><tr>'+
+    '<th>ACTION</th><th>DIR.</th><th>ENTRÉE</th><th>QTÉ</th>'+
+    '<th>STOP</th><th>OBJECTIF</th>'+
+    '<th>COURS ACTUEL</th><th>P&amp;L</th><th>STATUT</th><th></th>'+
+    '</tr></thead>'+
+    '<tbody>'+trades.map(function(t){return tradeRow(t,type);}).join('')+'</tbody>'+
+    '</table></div>';
 }
 // Delegate close/delete buttons
 document.addEventListener('click',function(e){
@@ -1036,26 +1161,55 @@ document.addEventListener('click',function(e){
   var db=e.target.closest('[data-del-type]');
   if(db){deleteTrade(db.dataset.delType,parseInt(db.dataset.delId,10));}
 });
-function renderReal(){
+async function renderReal(){
   var open=realTrades.filter(function(t){return t.status==='open';});
   var closed=realTrades.filter(function(t){return t.status==='closed';});
   var wins=closed.filter(function(t){return(pnl(t)||0)>=0;});
-  $('rKpi1').textContent=open.length;
-  $('rKpi2').innerHTML='<span style="color:var(--muted)">Live requis</span>';
-  $('rKpi3').innerHTML=closed.length?'<span class="'+(wins.length/closed.length>=0.5?'pos':'neg')+'">'+(wins.length/closed.length*100).toFixed(0)+'%</span>':'<span style="color:var(--muted)">—</span>';
+  // Show table immediately then update with live prices
   $('realOpenTable').innerHTML=tradesTable(open,'real');
   $('realClosedTable').innerHTML=tradesTable(closed,'real');
+  // Fetch live prices async
+  if(open.length){
+    await refreshAllLivePrices(realTrades);
+    // Compute total live P&L
+    var totalPL = open.reduce(function(a,t){return a+(pnl(t)||0);},0);
+    $('rKpi1').textContent=open.length;
+    $('rKpi2').innerHTML=totalPL>=0
+      ?'<span class="pos">+'+(totalPL.toFixed(0))+' live</span>'
+      :'<span class="neg">'+(totalPL.toFixed(0))+' live</span>';
+    $('rKpi3').innerHTML=closed.length?'<span class="'+(wins.length/closed.length>=0.5?'pos':'neg')+'">'+(wins.length/closed.length*100).toFixed(0)+'%</span>':'<span style="color:var(--muted)">—</span>';
+    $('realOpenTable').innerHTML=tradesTable(open,'real');
+    startLiveRefresh(function(){return realTrades;},function(){renderReal();});
+  } else {
+    $('rKpi1').textContent=open.length;
+    $('rKpi2').innerHTML='<span style="color:var(--muted)">—</span>';
+    $('rKpi3').innerHTML=closed.length?'<span class="'+(wins.length/closed.length>=0.5?'pos':'neg')+'">'+(wins.length/closed.length*100).toFixed(0)+'%</span>':'<span style="color:var(--muted)">—</span>';
+  }
 }
-function renderPaper(){
+async function renderPaper(){
   var open=paperTrades.filter(function(t){return t.status==='open';});
   var closed=paperTrades.filter(function(t){return t.status==='closed';});
   var wins=closed.filter(function(t){return(pnl(t)||0)>=0;});
-  var totalPL=closed.reduce(function(a,t){return a+(pnl(t)||0);},0);
-  $('pKpi1').textContent=open.length;
-  $('pKpi2').innerHTML=closed.length?(totalPL>=0?'<span class="pos">+'+totalPL.toFixed(0)+'</span>':'<span class="neg">'+totalPL.toFixed(0)+'</span>'):'<span style="color:var(--muted)">—</span>';
-  $('pKpi3').innerHTML=closed.length?'<span class="'+(wins.length/closed.length>=0.5?'pos':'neg')+'">'+(wins.length/closed.length*100).toFixed(0)+'%</span>':'<span style="color:var(--muted)">—</span>';
+  var closedPL=closed.reduce(function(a,t){return a+(pnl(t)||0);},0);
+  // Show immediately
   $('paperOpenTable').innerHTML=tradesTable(open,'paper');
   $('paperClosedTable').innerHTML=tradesTable(closed,'paper');
+  if(open.length){
+    await refreshAllLivePrices(paperTrades);
+    var livePL = open.reduce(function(a,t){return a+(pnl(t)||0);},0);
+    var totalPL = closedPL + livePL;
+    $('pKpi1').textContent=open.length;
+    $('pKpi2').innerHTML=totalPL>=0
+      ?'<span class="pos">+'+(totalPL.toFixed(0))+' live</span>'
+      :'<span class="neg">'+(totalPL.toFixed(0))+' live</span>';
+    $('pKpi3').innerHTML=closed.length?'<span class="'+(wins.length/closed.length>=0.5?'pos':'neg')+'">'+(wins.length/closed.length*100).toFixed(0)+'%</span>':'<span style="color:var(--muted)">—</span>';
+    $('paperOpenTable').innerHTML=tradesTable(open,'paper');
+    startLiveRefresh(function(){return paperTrades;},function(){renderPaper();});
+  } else {
+    $('pKpi1').textContent=open.length;
+    $('pKpi2').innerHTML=closed.length?(closedPL>=0?'<span class="pos">+'+closedPL.toFixed(0)+'</span>':'<span class="neg">'+closedPL.toFixed(0)+'</span>'):'<span style="color:var(--muted)">—</span>';
+    $('pKpi3').innerHTML=closed.length?'<span class="'+(wins.length/closed.length>=0.5?'pos':'neg')+'">'+(wins.length/closed.length*100).toFixed(0)+'%</span>':'<span style="color:var(--muted)">—</span>';
+  }
 }
 
 // ─── PERF RENDER ──────────────────────────────────────────────────────────────
