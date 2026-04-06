@@ -770,8 +770,18 @@ function analyze(){
   setTimeout(function(){doAnalyze();},400);
 }
 function doAnalyze(){
-  // Try live data first, fallback to mock
+  // Timeout fallback — if TwelveData takes more than 8s, use mock
+  var timedOut = false;
+  var fallbackTimer = setTimeout(function(){
+    timedOut = true;
+    var m = MOCK[selTicker] || {name:selName,exchange:selXch,currency:selCur||'USD',price:100+Math.random()*400,chg:(Math.random()-0.5)*5,chgP:(Math.random()-0.5)*3,signal:'NEUTRE',score:0,rsi:50,mom20:0,volR:1,basePrice:100,trend:'flat'};
+    setStatus('⚠ TwelveData timeout — données démo','var(--neutral)');
+    doRender(m, 'demo');
+  }, 8000);
+
   fetchLiveData(selTicker).then(function(live){
+    if(timedOut) return; // already rendered fallback
+    clearTimeout(fallbackTimer);
     var m = live || MOCK[selTicker];
     if(!m){
       m={name:selName,exchange:selXch,currency:selCur||'USD',price:100+Math.random()*400,chg:(Math.random()-0.5)*5,chgP:(Math.random()-0.5)*3,
@@ -788,6 +798,8 @@ function doAnalyze(){
       $('avPanel').style.display = 'none';
     }
   }).catch(function(){
+    if(timedOut) return;
+    clearTimeout(fallbackTimer);
     var m = MOCK[selTicker] || {name:selName,exchange:selXch,currency:selCur||'USD',price:100+Math.random()*400,chg:(Math.random()-0.5)*5,chgP:(Math.random()-0.5)*3,signal:'NEUTRE',score:0,rsi:50,mom20:0,volR:1,basePrice:100,trend:'flat'};
     doRender(m, 'demo');
     if (selTicker && !selTicker.includes('.')) {
