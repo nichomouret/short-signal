@@ -456,8 +456,14 @@ function showTab(id){
   if(id==='real') renderReal();
   if(id==='paper') renderPaper();
   if(id==='perf') renderPerf();
-  if(id==='reco') renderReco();
-  if(id==='radar') renderRadar();
+  if(id==='reco') {
+    renderReco(); // show immediately with cached/demo prices
+    fetchAllRecoPrices().then(function(){ renderReco(); }); // then update with live
+  }
+  if(id==='radar') {
+    renderRadar();
+    fetchAllRecoPrices().then(function(){ renderRadar(); });
+  }
 }
 function showRTab(id){
   ['squeeze','flow','inst'].forEach(function(t){
@@ -1294,7 +1300,15 @@ function recoCard(d,r){
   html+='<div><div style="font-family:Syne,sans-serif;font-size:17px;font-weight:800">'+esc(d.ticker)+'</div>';
   html+='<div style="font-size:9px;color:var(--muted);margin-top:2px">'+esc(d.name)+' · '+esc(d.sector)+'</div>';
   html+='<div style="margin-top:4px">'+capBadgeHTML(d.ticker)+'</div></div>';
-  html+='<div style="text-align:right"><div style="font-family:Syne,sans-serif;font-size:14px;font-weight:700">'+d.price.toFixed(2)+' '+esc(d.currency)+'</div></div></div>';
+  var lp = livePrices[d.ticker];
+  var priceStr = d.price.toFixed(2)+' '+esc(d.currency);
+  var priceColor = 'var(--text)';
+  var chgStr = '';
+  if (lp && lp.price > 0) {
+    priceColor = lp.chgP >= 0 ? 'var(--long)' : 'var(--short)';
+    chgStr = '<div style="font-size:9px;color:'+priceColor+'">'+(lp.chgP>=0?'+':'')+lp.chgP.toFixed(2)+'% aujourd'hui</div>';
+  }
+  html+='<div style="text-align:right"><div style="font-family:Syne,sans-serif;font-size:14px;font-weight:700;color:'+priceColor+'">'+priceStr+'</div>'+chgStr+'</div></div>';
   html+='<div style="display:grid;grid-template-columns:auto 1fr;gap:11px;align-items:center;margin-bottom:12px">';
   html+='<div style="padding:7px 12px;border:2px solid '+ac+';background:'+(isLong?'rgba(0,255,136,.08)':'rgba(255,51,85,.08)')+';font-family:Syne,sans-serif;font-weight:800;font-size:12px;color:'+ac+'">'+(isLong?'▲ LONG':'▼ SHORT')+'</div>';
   html+='<div><div style="font-family:Syne,sans-serif;font-size:26px;font-weight:800;color:'+ac+'">'+r.potential.toFixed(0)+'%</div>';
@@ -1327,6 +1341,40 @@ function recoCard(d,r){
   html+='</div>';
   return html;
 }
+// Update RECO_DATA prices from live cache
+function applyLivePricesToReco() {
+  RECO_DATA.forEach(function(d) {
+    var lp = livePrices[d.ticker];
+    if (lp && lp.price > 0) {
+      d.price = lp.price;
+      d.chgP  = lp.chgP;
+    }
+  });
+  SHORT_DATA.forEach(function(d) {
+    var lp = livePrices[d.ticker];
+    if (lp && lp.price > 0) d.price = lp.price;
+  });
+  FLOW_DATA.forEach(function(d) {
+    var lp = livePrices[d.ticker];
+    if (lp && lp.price > 0) d.price = lp.price;
+  });
+}
+
+async function fetchAllRecoPrices() {
+  var tickers = [...new Set(
+    RECO_DATA.map(function(d){return d.ticker;})
+    .concat(SHORT_DATA.map(function(d){return d.ticker;}))
+    .concat(FLOW_DATA.map(function(d){return d.ticker;}))
+  )];
+  // Fetch in batches of 5 to avoid rate limits
+  for (var i = 0; i < tickers.length; i += 5) {
+    var batch = tickers.slice(i, i+5);
+    await Promise.all(batch.map(fetchLivePrice));
+    await new Promise(function(r){setTimeout(r,300);}); // small delay between batches
+  }
+  applyLivePricesToReco();
+}
+
 function renderReco(){
   var filter=$('recoFilter')?.value||'all';
   var capF=$('recoCapFilter')?.value||'all';
@@ -1383,9 +1431,15 @@ function squeezeCard(d,rank){
   html+='<div class="rrank">#'+rank+'</div>';
   html+='<div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px">';
   html+='<div class="scircle" style="border:2px solid '+scC+';background:'+(sc>=75?'rgba(255,51,85,.08)':sc>=55?'rgba(255,187,0,.06)':'transparent')+'"><span style="color:'+scC+'">'+sc+'</span><small>SQUEEZE</small></div>';
-  html+='<div><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800">'+esc(d.ticker)+'</div>';
+  var slp = livePrices[d.ticker];
+  var spColor = slp ? (slp.chgP>=0?'var(--long)':'var(--short)') : 'var(--text)';
+  html+='<div><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800">'+esc(d.ticker)+
+    (slp?' <span style="font-size:11px;color:'+spColor+'">'+d.price.toFixed(2)+'</span>':'')+
+    '</div>';
   html+='<div style="font-size:9px;color:var(--muted)">'+esc(d.name)+' · '+esc(d.sector)+'</div>';
-  html+='<div style="margin-top:3px">'+capBadgeHTML(d.ticker)+'</div></div></div>';
+  html+='<div style="margin-top:3px">'+capBadgeHTML(d.ticker)+
+    (slp?'<span style="font-size:8px;color:'+spColor+';margin-left:6px">'+(slp.chgP>=0?'+':'')+slp.chgP.toFixed(2)+'%</span>':'')+
+    '</div></div></div>';
   html+=gauges.map(function(g){return '<div class="gwrap"><div class="glbl">'+g.l+'</div><div class="gtrack"><div class="gfill" style="width:'+Math.max(0,Math.min(100,g.pct))+'%;background:'+g.c+'"></div></div><div class="gval" style="color:'+g.c+'">'+g.v+'</div></div>';}).join('');
   html+='<div style="margin-top:10px;padding-top:9px;border-top:1px solid var(--border)">';
   html+='<div style="font-size:8px;color:var(--muted);letter-spacing:2px;margin-bottom:5px">CATALYSEURS</div>';
@@ -1405,7 +1459,11 @@ function flowCard(d,rank){
   html+='<div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:12px">';
   html+='<div class="scircle" style="border:2px solid '+scC+'"><span style="color:'+scC+'">'+sc+'</span><small>SCORE</small></div>';
   html+='<div><div style="font-family:Syne,sans-serif;font-size:16px;font-weight:800">'+esc(d.ticker)+' <span style="font-size:11px;padding:2px 8px;border:1.5px solid '+ac+';color:'+ac+'">'+d.netFlow+'</span></div>';
-  html+='<div style="font-size:9px;color:var(--muted)">'+esc(d.name)+' · '+esc(d.sector)+'</div>';
+  var flp = livePrices[d.ticker];
+  var fpColor = flp ? (flp.chgP>=0?'var(--long)':'var(--short)') : 'var(--text)';
+  html+='<div style="font-size:9px;color:var(--muted)">'+esc(d.name)+' · '+esc(d.sector)+
+    (flp?' · <span style="color:'+fpColor+'">'+d.price.toFixed(2)+' '+(flp.chgP>=0?'+':'')+flp.chgP.toFixed(2)+'%</span>':'')+
+    '</div>';
   html+='<div style="font-size:9px;color:'+freshC+';margin-top:2px">'+freshL+'</div></div></div>';
   html+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;background:var(--border);margin-bottom:10px">';
   html+='<div style="background:var(--panel2);padding:8px;text-align:center"><div style="font-size:8px;color:var(--long);margin-bottom:3px">CALLS</div><div style="font-family:Syne,sans-serif;font-size:13px;color:var(--long)">'+(d.callVol/1000).toFixed(0)+'K</div></div>';
@@ -1445,7 +1503,11 @@ function instRow(c,rank){
   var sigC=c.signal==='LONG'?'var(--long)':'var(--short)';
   html+='<span style="font-size:8px;color:'+sigC+';border:1px solid '+sigC+'44;padding:1px 5px">'+(c.signal==='LONG'?'▲':'▼')+' '+esc(c.signal)+'</span>';
   if(c.crossing)html+='<span style="font-size:8px;background:'+(up?'rgba(0,255,136,.15)':'rgba(255,51,85,.15)')+';color:'+ac+';padding:2px 6px;letter-spacing:1px">⚡ FRANCHISSEMENT</span>';
-  html+='</div><div style="font-size:9px;color:var(--muted);margin-top:2px">'+esc(c.name)+'</div></div></div>';
+  var ilp = livePrices[c.ticker];
+  var ipColor = ilp ? (ilp.chgP>=0?'var(--long)':'var(--short)') : 'var(--text)';
+  html+='</div><div style="font-size:9px;color:var(--muted);margin-top:2px">'+esc(c.name)+
+    (ilp?' · <span style="color:'+ipColor+'">'+c.price.toFixed(2)+' '+(ilp.chgP>=0?'+':'')+ilp.chgP.toFixed(2)+'%</span>':'')+
+    '</div></div></div>';
   html+='<div style="text-align:right;min-width:140px">';
   html+='<div style="font-size:11px;color:var(--text);font-weight:bold">'+esc(c.fund)+'</div>';
   html+='<div style="font-family:Syne,sans-serif;font-size:17px;font-weight:700;color:'+ac+'">'+(up?'↑':'↓')+' '+c.pct.toFixed(1)+'% <span style="font-size:9px">'+(up?'+':'')+c.change.toFixed(1)+'%</span></div>';
