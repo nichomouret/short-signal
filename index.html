@@ -1540,7 +1540,7 @@ document.getElementById('recoGrid').addEventListener('click',function(e){
   var card=e.target.closest('[data-reco-ticker]');
   if(!card)return;
   selTicker=card.dataset.recoTicker;selName=card.dataset.recoName;selXch=card.dataset.recoXch;selCur=card.dataset.recoCur;
-  inp.value=selName;showTab('signal');setTimeout(function(){analyze();},100);
+  inp.value=selName;showTab('signal');setTimeout(function(){analyze();},300);
 });
 
 // ─── RADAR RENDER ─────────────────────────────────────────────────────────────
@@ -1682,7 +1682,7 @@ function renderRadar(){
     var card=e.target.closest('[data-radar-ticker]');
     if(!card)return;
     selTicker=card.dataset.radarTicker;selName=card.dataset.radarName;selXch=card.dataset.radarXch;selCur=card.dataset.radarCur;
-    inp.value=selName;showTab('signal');setTimeout(function(){analyze();},100);
+    inp.value=selName;showTab('signal');setTimeout(function(){analyze();},300);
   });
 });
 
