@@ -229,6 +229,21 @@ select.si{cursor:pointer;}
       <div class="tbox"><div class="tlbl">OBJECTIF IA</div><div class="tprice pos" id="tTgt"></div><div class="tpct pos" id="tTgtP"></div></div>
     </div>
     <div class="hbar"><span style="color:var(--muted);letter-spacing:1px;">HORIZON SUGGÉRÉ</span><span id="rHorizon" style="color:var(--neutral);letter-spacing:1px;font-size:11px;"></span></div>
+
+    <!-- ALPHA VANTAGE FUNDAMENTALS PANEL -->
+    <div class="spanel" id="avPanel" style="margin-bottom:13px;display:none;">
+      <div class="stitle" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>DONNÉES FONDAMENTALES — ALPHA VANTAGE</span>
+        <span id="avStatus" style="font-size:8px;color:var(--muted);">Chargement...</span>
+      </div>
+      <!-- Analyst consensus -->
+      <div id="avConsensus" style="margin-bottom:12px;"></div>
+      <!-- Key metrics grid -->
+      <div id="avMetrics" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);margin-bottom:10px;"></div>
+      <!-- Analyst ratings bar -->
+      <div id="avRatings" style="margin-bottom:8px;"></div>
+    </div>
+
     <div class="aipanel"><div class="aihead"><div class="aiicon"></div><div class="aititle">ANALYSE IA — CLAUDE SONNET</div></div><div id="aiText" class="aitext"></div></div>
     <div class="add-btns">
       <span style="font-size:9px;color:var(--muted);letter-spacing:2px;">AJOUTER →</span>
@@ -755,9 +770,20 @@ function doAnalyze(){
          rsi:30+Math.random()*50,mom20:(Math.random()-0.5)*20,volR:0.7+Math.random()*1.5,basePrice:100+Math.random()*400,trend:'flat'};
     }
     doRender(m, live ? 'live' : 'demo');
+    // Fetch Alpha Vantage fundamentals async (US tickers only)
+    if (selTicker && !selTicker.includes('.')) {
+      $('avPanel').style.display = 'block';
+      $('avStatus').textContent = 'Chargement Alpha Vantage...';
+      fetchAVData(selTicker).then(function(av){ renderAVPanel(av); });
+    } else {
+      $('avPanel').style.display = 'none';
+    }
   }).catch(function(){
     var m = MOCK[selTicker] || {name:selName,exchange:selXch,currency:selCur||'USD',price:100+Math.random()*400,chg:(Math.random()-0.5)*5,chgP:(Math.random()-0.5)*3,signal:'NEUTRE',score:0,rsi:50,mom20:0,volR:1,basePrice:100,trend:'flat'};
     doRender(m, 'demo');
+    if (selTicker && !selTicker.includes('.')) {
+      fetchAVData(selTicker).then(function(av){ renderAVPanel(av); });
+    }
   });
 }
 function doRender(m, dataSource){
@@ -810,11 +836,114 @@ function doRender(m, dataSource){
   getAI(selTicker,m.name||selName,m.signal,m.score,m.rsi,m.mom20,m.volR,sig.F,cur,sig.stop,sig.tgt,sig.hor,m.currency||'USD');
 }
 
+// ── ALPHA VANTAGE FUNDAMENTALS ───────────────────────────────────────────────
+var avCache = {};
+
+async function fetchAVData(ticker) {
+  if (avCache[ticker]) return avCache[ticker];
+  try {
+    var r = await fetch('https://xaueur-proxy-production.up.railway.app/av/overview?ticker=' + encodeURIComponent(ticker));
+    var d = await r.json();
+    if (d && d.source && !d.error) {
+      avCache[ticker] = d;
+      return d;
+    }
+    return null;
+  } catch(e) { return null; }
+}
+
+function renderAVPanel(data) {
+  if (!data || !data.overview) {
+    $('avPanel').style.display = 'none';
+    return;
+  }
+  var ov = data.overview;
+  $('avPanel').style.display = 'block';
+  $('avStatus').textContent = 'Alpha Vantage · ' + (ov.latestQuarter || '');
+
+  // Analyst consensus
+  var total = (ov.analystRating ? (ov.analystRating.strongBuy + ov.analystRating.buy + ov.analystRating.hold + ov.analystRating.sell + ov.analystRating.strongSell) : 0);
+  var bullPct = total > 0 ? Math.round((ov.analystRating.strongBuy + ov.analystRating.buy) / total * 100) : 0;
+  var bearPct = total > 0 ? Math.round((ov.analystRating.sell + ov.analystRating.strongSell) / total * 100) : 0;
+  var holdPct = 100 - bullPct - bearPct;
+  var consensusColor = bullPct > 60 ? 'var(--long)' : bearPct > 40 ? 'var(--short)' : 'var(--neutral)';
+  var consensusLabel = bullPct > 60 ? 'ACHAT' : bearPct > 40 ? 'VENTE' : 'NEUTRE';
+
+  $('avConsensus').innerHTML = total > 0 ? (
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+    '<span style="font-size:9px;color:var(--muted);">CONSENSUS ANALYSTES ('+total+')</span>' +
+    '<span style="font-family:Syne,sans-serif;font-size:13px;font-weight:700;color:'+consensusColor+'">'+consensusLabel+' ('+bullPct+'% bull)</span>' +
+    '</div>' +
+    '<div style="height:6px;border-radius:3px;background:var(--border);overflow:hidden;display:flex;margin-bottom:8px;">' +
+    '<div style="width:'+bullPct+'%;background:var(--long);"></div>' +
+    '<div style="width:'+holdPct+'%;background:var(--neutral);"></div>' +
+    '<div style="width:'+bearPct+'%;background:var(--short);"></div>' +
+    '</div>' +
+    '<div style="display:flex;gap:12px;font-size:8px;color:var(--muted);">' +
+    '<span style="color:var(--long)">▲ Fort achat: '+(ov.analystRating.strongBuy||0)+'</span>' +
+    '<span style="color:var(--long)">Achat: '+(ov.analystRating.buy||0)+'</span>' +
+    '<span style="color:var(--neutral)">Neutre: '+(ov.analystRating.hold||0)+'</span>' +
+    '<span style="color:var(--short)">Vente: '+(ov.analystRating.sell||0)+'</span>' +
+    '<span style="color:var(--short)">▼ Fort vente: '+(ov.analystRating.strongSell||0)+'</span>' +
+    '</div>'
+  ) : '<div style="font-size:9px;color:var(--muted)">Consensus non disponible</div>';
+
+  // Key metrics
+  var cur = parseFloat($('tCurr').textContent) || 0;
+  var targetUpside = ov.analystTarget && cur > 0 ? ((ov.analystTarget - cur) / cur * 100).toFixed(1) : null;
+  var targetColor = targetUpside > 0 ? 'var(--long)' : 'var(--short)';
+
+  var metrics = [
+    {l:'P/E Actuel',    v: ov.pe ? ov.pe.toFixed(1) + 'x' : '—',                              c: 'var(--text)'},
+    {l:'P/E Forward',   v: ov.forwardPE ? ov.forwardPE.toFixed(1) + 'x' : '—',                c: 'var(--text)'},
+    {l:'Beta',          v: ov.beta ? ov.beta.toFixed(2) : '—',                                  c: ov.beta > 1.5 ? 'var(--short)' : ov.beta > 1 ? 'var(--neutral)' : 'var(--long)'},
+    {l:'Objectif Anal.',v: ov.analystTarget ? ov.analystTarget.toFixed(2) + (targetUpside ? ' ('+( targetUpside > 0 ? '+' : '')+targetUpside+'%)' : '') : '—', c: targetColor},
+  ];
+  $('avMetrics').innerHTML = metrics.map(function(m) {
+    return '<div style="background:var(--panel2);padding:10px;text-align:center;">' +
+      '<div style="font-size:8px;color:var(--muted);letter-spacing:1px;margin-bottom:4px;">' + m.l + '</div>' +
+      '<div style="font-family:Syne,sans-serif;font-size:13px;font-weight:700;color:' + m.c + '">' + m.v + '</div>' +
+      '</div>';
+  }).join('');
+
+  // 52-week range
+  if (ov.high52 && ov.low52 && cur > 0) {
+    var range = ov.high52 - ov.low52;
+    var pos = range > 0 ? Math.max(0, Math.min(100, (cur - ov.low52) / range * 100)) : 50;
+    var posColor = pos > 70 ? 'var(--short)' : pos < 30 ? 'var(--long)' : 'var(--neutral)';
+    $('avRatings').innerHTML =
+      '<div style="font-size:8px;color:var(--muted);letter-spacing:2px;margin-bottom:6px;">POSITION DANS LE RANGE 52 SEMAINES</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;">' +
+      '<span style="font-size:9px;color:var(--short)">' + ov.low52.toFixed(2) + '</span>' +
+      '<div style="flex:1;height:6px;background:var(--border);border-radius:3px;position:relative;">' +
+      '<div style="position:absolute;left:' + pos.toFixed(0) + '%;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;border-radius:50%;background:' + posColor + ';border:2px solid var(--bg);"></div>' +
+      '<div style="width:' + pos.toFixed(0) + '%;height:100%;background:linear-gradient(90deg,var(--short),'+posColor+');border-radius:3px;opacity:.4;"></div>' +
+      '</div>' +
+      '<span style="font-size:9px;color:var(--long)">' + ov.high52.toFixed(2) + '</span>' +
+      '<span style="font-size:9px;color:' + posColor + ';font-weight:700;">' + pos.toFixed(0) + '%</span>' +
+      '</div>';
+  }
+}
+
 async function getAI(ticker,name,signal,score,rsi,mom20,volR,F,cur,stop,tgt,hor,currency){
   try{
     var fList=Object.values(F).map(function(f){return'- '+f.l+' ('+(f.s>0?'+':'')+f.s+')';}).join('\n');
     var dir=signal==='LONG'?'haussiere':signal==='SHORT'?'baissiere':'neutre';
-    var prompt='Tu es analyste quantitatif senior, trading court terme (<1 mois).\n\nACTION: '+ticker+' — '+name+'\nPrix: '+cur.toFixed(2)+' '+currency+' | Signal: '+signal+' (score: '+(score>0?'+':'')+score+'/100)\nRSI: '+rsi.toFixed(1)+' | Momentum 20j: '+(mom20>0?'+':'')+mom20.toFixed(2)+'% | Volume: x'+volR.toFixed(2)+'\nStop: '+stop.toFixed(2)+' | Objectif: '+tgt.toFixed(2)+' | Horizon: '+hor+'\nFacteurs:\n'+fList+'\n\nAnalyse en 5 points:\n1. SIGNAL — Direction '+dir+' et 2-3 facteurs determinants\n2. CONTEXTE — Macro/secteur pertinent court terme\n3. NIVEAUX — Support immediat, resistance, zone retournement\n4. CATALYSEURS — Evenements 2-4 prochaines semaines\n5. CONVICTION — Niveau (Faible/Moyen/Fort), ratio R/R, conseil sizing\n\nDirect, professionnel, 2-3 phrases par point.';
+    // Include AV fundamentals in AI prompt if available
+    var avData = avCache[ticker];
+    var avContext = '';
+    if (avData && avData.overview) {
+      var ov = avData.overview;
+      var total = ov.analystRating ? (ov.analystRating.strongBuy + ov.analystRating.buy + ov.analystRating.hold + ov.analystRating.sell + ov.analystRating.strongSell) : 0;
+      var bullCount = ov.analystRating ? (ov.analystRating.strongBuy + ov.analystRating.buy) : 0;
+      avContext = '\nDONNÉES FONDAMENTALES (Alpha Vantage):\n' +
+        '- Secteur: ' + (ov.sector||'N/A') + ' | Industrie: ' + (ov.industry||'N/A') + '\n' +
+        '- P/E: ' + (ov.pe||'N/A') + 'x | Forward P/E: ' + (ov.forwardPE||'N/A') + 'x | Beta: ' + (ov.beta||'N/A') + '\n' +
+        '- Objectif consensus analystes: ' + (ov.analystTarget||'N/A') + ' ' + currency + '\n' +
+        '- Consensus: ' + bullCount + '/' + total + ' analystes haussiers' + (total > 0 ? ' (' + Math.round(bullCount/total*100) + '%)' : '') + '\n' +
+        '- EPS: ' + (ov.eps||'N/A') + ' | Mkt Cap: ' + (ov.marketCap ? (ov.marketCap/1e9).toFixed(1)+'B' : 'N/A');
+    }
+    var prompt='Tu es analyste quantitatif senior, trading court terme (<1 mois).\n\nACTION: '+ticker+' — '+name+'\nPrix: '+cur.toFixed(2)+' '+currency+' | Signal: '+signal+' (score: '+(score>0?'+':'')+score+'/100)\nRSI: '+rsi.toFixed(1)+' | Momentum 20j: '+(mom20>0?'+':'')+mom20.toFixed(2)+'% | Volume: x'+volR.toFixed(2)+'\nStop: '+stop.toFixed(2)+' | Objectif algo: '+tgt.toFixed(2)+' | Horizon: '+hor+'\nFacteurs:\n'+fList+avContext+'\n\nAnalyse en 5 points:\n1. SIGNAL — Direction '+dir+' et 2-3 facteurs determinants\n2. CONTEXTE — Macro/secteur, valorisation vs consensus analystes\n3. NIVEAUX — Support immediat, resistance, zone retournement\n4. CATALYSEURS — Evenements 2-4 prochaines semaines\n5. CONVICTION — Niveau (Faible/Moyen/Fort), ratio R/R, conseil sizing\n\nDirect, professionnel, 2-3 phrases par point.';
     var r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1200,messages:[{role:'user',content:prompt}]})});
     var d=await r.json();
     $('aiText').textContent=(d.content&&d.content[0]&&d.content[0].text)||'Analyse indisponible.';
