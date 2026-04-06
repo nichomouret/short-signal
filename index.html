@@ -682,7 +682,7 @@ function buildFactors(m,closes,highs,lows){
   if(gc===3)F.pat={s:1,l:'3 bougies haussieres'};else if(gc===0)F.pat={s:-1,l:'3 bougies baissieres'};else F.pat={s:0,l:gc+'/3 bougies'};
   var hor=atrPct>3?'3-7 JOURS (volatil)':atrPct>1.5?'7-14 JOURS':'14-28 JOURS';
   var a2=ATR*2,stop=m.score>=0?cur-a2:cur+a2,tgt=m.score>=0?cur+a2*1.5:cur-a2*1.5;
-  return{F:F,hor:hor,stop:stop,tgt:tgt,e9:e9.slice(-30),e21:e21.slice(-30),e50v:e50[n-1],atrPct:atr/(closes[n-1]||1)*100};
+  return{F:F,hor:hor,stop:stop,tgt:tgt,e9:e9.slice(-30),e21:e21.slice(-30),e50v:e50[n-1],atrPct:ATR/(closes[n-1]||1)*100};
 }
 
 // ─── CHART ────────────────────────────────────────────────────────────────────
